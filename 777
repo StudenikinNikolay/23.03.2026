@@ -1,0 +1,204 @@
+Option Explicit
+
+Public Sub ReplaceSheets_Task_23032026_v3()
+
+    Dim wbSource As Workbook
+    Dim wbTarget As Workbook
+    
+    Dim sourceWbName As String
+    Dim targetWbName As String
+    
+    Dim arrMap As Variant
+    Dim i As Long
+    
+    Dim oldSheetName As String
+    Dim newSheetName As String
+    Dim tempOldName As String
+    
+    Dim wsNew As Worksheet
+    Dim insertedSheets As Collection
+    Dim oldPositions() As Long
+    
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    Application.EnableEvents = False
+    
+    On Error GoTo ErrHandler
+    
+    sourceWbName = "Форма КП финальная версия рабочий.xlsb"
+    targetWbName = "Форма 1.1. КП ВиКР 25.03.2026.xlsx"
+    
+    Set wbSource = GetOpenWorkbookByName(sourceWbName)
+    Set wbTarget = GetOpenWorkbookByName(targetWbName)
+    
+    If wbSource Is Nothing Then
+        Err.Raise vbObjectError + 1000, , "Не найдена открытая книга-источник: " & sourceWbName
+    End If
+    
+    If wbTarget Is Nothing Then
+        Err.Raise vbObjectError + 1001, , "Не найдена открытая книга-приемник: " & targetWbName
+    End If
+
+    arrMap = Array( _
+        Array("Форма КП", "Форма КП"), _
+        Array("П2. РВиСР", "СВОР"), _
+        Array("П2.1. РВиСР по ОКС", "РВиСР по ОКС"), _
+        Array("П3. Обонснование ЛР", "Калькуляция ЛР"), _
+        Array("П4. Обонсонвание ТР", "Калькуляция ТР"), _
+        Array("П5. Вед. МТР", "Прил В"), _
+        Array("П5.1. Расчет логистики", "Прил В.1") _
+    )
+    
+    ReDim oldPositions(LBound(arrMap) To UBound(arrMap))
+    Set insertedSheets = New Collection
+    
+    ' 1. Проверяем наличие всех листов и запоминаем позиции старых листов
+    For i = LBound(arrMap) To UBound(arrMap)
+        oldSheetName = CStr(arrMap(i)(0))
+        newSheetName = CStr(arrMap(i)(1))
+        
+        If Not SheetExists(wbTarget, oldSheetName) Then
+            Err.Raise vbObjectError + 1100 + i, , "В книге-приемнике отсутствует лист: " & oldSheetName
+        End If
+        
+        If Not SheetExists(wbSource, newSheetName) Then
+            Err.Raise vbObjectError + 1200 + i, , "В книге-источнике отсутствует лист: " & newSheetName
+        End If
+        
+        oldPositions(i) = wbTarget.Worksheets(oldSheetName).Index
+    Next i
+    
+    ' 2. Временно переименовываем старые листы
+    For i = LBound(arrMap) To UBound(arrMap)
+        oldSheetName = CStr(arrMap(i)(0))
+        tempOldName = "__OLD_TMP_" & Format(i + 1, "00") & "__"
+        wbTarget.Worksheets(oldSheetName).Name = tempOldName
+    Next i
+    
+    ' 3. Копируем новые листы из книги-источника в книгу-приемник
+    For i = LBound(arrMap) To UBound(arrMap)
+        newSheetName = CStr(arrMap(i)(1))
+        
+        wbSource.Worksheets(newSheetName).Copy After:=wbTarget.Worksheets(wbTarget.Worksheets.Count)
+        Set wsNew = wbTarget.Worksheets(wbTarget.Worksheets.Count)
+        insertedSheets.Add wsNew.Name
+    Next i
+    
+    ' 4. Переименовываем вставленные листы в имена старых
+    '    Только если имя реально отличается
+    For i = LBound(arrMap) To UBound(arrMap)
+        oldSheetName = CStr(arrMap(i)(0))
+        newSheetName = CStr(arrMap(i)(1))
+        
+        Set wsNew = wbTarget.Worksheets(CStr(insertedSheets(i + 1)))
+        
+        If StrComp(wsNew.Name, oldSheetName, vbTextCompare) <> 0 Then
+            wsNew.Name = oldSheetName
+        End If
+    Next i
+    
+    ' 5. Переставляем новые листы на места старых
+    For i = LBound(arrMap) To UBound(arrMap)
+        oldSheetName = CStr(arrMap(i)(0))
+        Set wsNew = wbTarget.Worksheets(oldSheetName)
+        
+        If oldPositions(i) <= 1 Then
+            wsNew.Move Before:=wbTarget.Worksheets(1)
+        Else
+            wsNew.Move After:=wbTarget.Worksheets(oldPositions(i) - 1)
+        End If
+    Next i
+    
+    ' 6. Обновляем формулы и ссылки по книге:
+    '    временные имена старых листов -> финальные имена листов
+    For i = LBound(arrMap) To UBound(arrMap)
+        oldSheetName = CStr(arrMap(i)(0))
+        tempOldName = "__OLD_TMP_" & Format(i + 1, "00") & "__"
+        
+        ReplaceSheetReferencesInWorkbook wbTarget, tempOldName, oldSheetName
+    Next i
+    
+    ' 7. Удаляем временные старые листы
+    For i = LBound(arrMap) To UBound(arrMap)
+        tempOldName = "__OLD_TMP_" & Format(i + 1, "00") & "__"
+        If SheetExists(wbTarget, tempOldName) Then
+            wbTarget.Worksheets(tempOldName).Delete
+        End If
+    Next i
+
+    MsgBox "Готово. Листы заменены.", vbInformation
+
+SafeExit:
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+    Application.EnableEvents = True
+    Exit Sub
+
+ErrHandler:
+    MsgBox "Ошибка: " & Err.Description, vbCritical
+    Resume SafeExit
+
+End Sub
+
+Private Function GetOpenWorkbookByName(ByVal wbName As String) As Workbook
+    Dim wb As Workbook
+    For Each wb In Application.Workbooks
+        If StrComp(wb.Name, wbName, vbTextCompare) = 0 Then
+            Set GetOpenWorkbookByName = wb
+            Exit Function
+        End If
+    Next wb
+    Set GetOpenWorkbookByName = Nothing
+End Function
+
+Private Function SheetExists(ByVal wb As Workbook, ByVal sheetName As String) As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Worksheets(sheetName)
+    SheetExists = Not ws Is Nothing
+    Set ws = Nothing
+    On Error GoTo 0
+End Function
+
+Private Sub ReplaceSheetReferencesInWorkbook(ByVal wb As Workbook, ByVal oldRefName As String, ByVal newRefName As String)
+
+    Dim ws As Worksheet
+    Dim rngFormulas As Range
+    Dim c As Range
+    
+    Dim findText1 As String, replText1 As String
+    Dim findText2 As String, replText2 As String
+    
+    findText1 = "'" & oldRefName & "'!"
+    replText1 = "'" & newRefName & "'!"
+    
+    findText2 = oldRefName & "!"
+    replText2 = newRefName & "!"
+    
+    For Each ws In wb.Worksheets
+        
+        On Error Resume Next
+        Set rngFormulas = ws.UsedRange.SpecialCells(xlCellTypeFormulas)
+        On Error GoTo 0
+        
+        If Not rngFormulas Is Nothing Then
+            For Each c In rngFormulas.Cells
+                If Left$(c.Formula, 1) = "=" Then
+                    c.Formula = Replace(c.Formula, findText1, replText1, 1, -1, vbTextCompare)
+                    c.Formula = Replace(c.Formula, findText2, replText2, 1, -1, vbTextCompare)
+                End If
+            Next c
+        End If
+        
+        Set rngFormulas = Nothing
+    Next ws
+    
+    Dim nm As Name
+    For Each nm In wb.Names
+        On Error Resume Next
+        nm.RefersTo = Replace(nm.RefersTo, findText1, replText1, 1, -1, vbTextCompare)
+        nm.RefersTo = Replace(nm.RefersTo, findText2, replText2, 1, -1, vbTextCompare)
+        On Error GoTo 0
+    Next nm
+
+End Sub
